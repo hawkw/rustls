@@ -1,4 +1,8 @@
+#[cfg(feature = "logging")]
+use crate::log::{debug, trace};
 use crate::session::Session;
+#[cfg(not(feature = "logging"))]
+use crate::{debug, trace};
 use std::io::{IoSlice, Read, Result, Write};
 
 /// This type implements `io::Read` and `io::Write`, encapsulating
@@ -28,10 +32,18 @@ where
     /// If we have data to write, write it all.
     fn complete_prior_io(&mut self) -> Result<()> {
         if self.sess.is_handshaking() {
+            trace!(
+                "Stream<{}>: is_handshaking=true; complete_io",
+                std::any::type_name::<S>()
+            );
             self.sess.complete_io(self.sock)?;
         }
 
         if self.sess.wants_write() {
+            trace!(
+                "Stream<{}>: wants_write=true; complete_io",
+                std::any::type_name::<S>()
+            );
             self.sess.complete_io(self.sock)?;
         }
 
@@ -45,6 +57,7 @@ where
     T: 'a + Read + Write,
 {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        trace!("Stream<{}>: reading...", std::any::type_name::<S>());
         self.complete_prior_io()?;
 
         // We call complete_io() in a loop since a single call may read only
@@ -55,7 +68,9 @@ where
         // read from the underlying transport.
         while self.sess.wants_read() && self.sess.complete_io(self.sock)?.0 != 0 {}
 
-        self.sess.read(buf)
+        let read = self.sess.read(buf);
+        debug!("Stream<{}>: read={:?}", std::any::type_name::<S>(), read);
+        read
     }
 }
 
@@ -65,36 +80,69 @@ where
     T: 'a + Read + Write,
 {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        trace!("Stream<{}>: writing...", std::any::type_name::<S>());
         self.complete_prior_io()?;
 
-        let len = self.sess.write(buf)?;
+        let write = self.sess.write(buf);
+        debug!("Stream<{}>: write={:?}", std::any::type_name::<S>(), write);
+        let len = write?;
 
         // Try to write the underlying transport here, but don't let
         // any errors mask the fact we've consumed `len` bytes.
         // Callers will learn of permanent errors on the next call.
-        let _ = self.sess.complete_io(self.sock);
+        let _res = self.sess.complete_io(self.sock);
+        trace!(
+            "Stream<{}>: write; complete_io={:?}",
+            std::any::type_name::<S>(),
+            _res
+        );
 
         Ok(len)
     }
 
     fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> Result<usize> {
+        trace!(
+            "Stream<{}>: writing vectored...",
+            std::any::type_name::<S>()
+        );
         self.complete_prior_io()?;
 
-        let len = self.sess.write_vectored(bufs)?;
+        let write = self.sess.write_vectored(bufs);
+        debug!(
+            "Stream<{}>: write_vectored={:?}",
+            std::any::type_name::<S>(),
+            write
+        );
+        let len = write?;
 
         // Try to write the underlying transport here, but don't let
         // any errors mask the fact we've consumed `len` bytes.
         // Callers will learn of permanent errors on the next call.
-        let _ = self.sess.complete_io(self.sock);
-
+        let _res = self.sess.complete_io(self.sock);
+        trace!(
+            "Stream<{}>: write_vectored; complete_io={:?}",
+            std::any::type_name::<S>(),
+            _res
+        );
         Ok(len)
     }
 
     fn flush(&mut self) -> Result<()> {
+        trace!("Stream<{}>: flushing...", std::any::type_name::<S>());
         self.complete_prior_io()?;
 
-        self.sess.flush()?;
+        let flushed = self.sess.flush();
+        debug!(
+            "Stream<{}>: flush={:?}",
+            std::any::type_name::<S>(),
+            flushed,
+        );
+        flushed?;
         if self.sess.wants_write() {
+            trace!(
+                "Stream<{}>: flushed; wants_write=true",
+                std::any::type_name::<S>()
+            );
             self.sess.complete_io(self.sock)?;
         }
         Ok(())
